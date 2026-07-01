@@ -26,47 +26,35 @@ type ShoppingResult = {
 type FailedQuery = { query: string; error: string };
 
 type Filters = {
-  location: string;
-  gl: string;
-  hl: string;
-  googleDomain: string;
-  device: "desktop" | "tablet" | "mobile";
-  minPrice: string;
-  maxPrice: string;
-  sortBy: "" | "1" | "2";
-  freeShipping: boolean;
-  onSale: boolean;
-  maxPages: string;
+  countryCode: string;
+  searchLanguage: string;
+  languageCode: string;
+  locationUule: string;
+  mobileResults: boolean;
+  maxPagesPerQuery: string;
+  focusOnPaidAds: boolean;
 };
 
 const DEFAULT_FILTERS: Filters = {
-  location: "",
-  gl: "",
-  hl: "",
-  googleDomain: "",
-  device: "desktop",
-  minPrice: "",
-  maxPrice: "",
-  sortBy: "",
-  freeShipping: false,
-  onSale: false,
-  maxPages: "1"
+  countryCode: "",
+  searchLanguage: "",
+  languageCode: "",
+  locationUule: "",
+  mobileResults: false,
+  maxPagesPerQuery: "1",
+  focusOnPaidAds: true
 };
 
 function filtersToPayload(f: Filters) {
   const payload: Record<string, unknown> = {};
-  if (f.location.trim()) payload.location = f.location.trim();
-  if (f.gl.trim()) payload.gl = f.gl.trim();
-  if (f.hl.trim()) payload.hl = f.hl.trim();
-  if (f.googleDomain.trim()) payload.google_domain = f.googleDomain.trim();
-  if (f.device !== "desktop") payload.device = f.device;
-  if (f.minPrice.trim()) payload.min_price = Number(f.minPrice);
-  if (f.maxPrice.trim()) payload.max_price = Number(f.maxPrice);
-  if (f.sortBy) payload.sort_by = Number(f.sortBy);
-  if (f.freeShipping) payload.free_shipping = true;
-  if (f.onSale) payload.on_sale = true;
-  const maxPages = Number(f.maxPages);
-  payload.max_pages = Number.isFinite(maxPages) && maxPages >= 0 ? maxPages : 1;
+  if (f.countryCode.trim()) payload.countryCode = f.countryCode.trim();
+  if (f.searchLanguage.trim()) payload.searchLanguage = f.searchLanguage.trim();
+  if (f.languageCode.trim()) payload.languageCode = f.languageCode.trim();
+  if (f.locationUule.trim()) payload.locationUule = f.locationUule.trim();
+  if (f.mobileResults) payload.mobileResults = true;
+  if (f.focusOnPaidAds) payload.focusOnPaidAds = true;
+  const maxPages = Number(f.maxPagesPerQuery);
+  payload.maxPagesPerQuery = Number.isFinite(maxPages) && maxPages >= 0 ? maxPages : 1;
   return payload;
 }
 
@@ -200,8 +188,8 @@ export default function SearchPage() {
           <span className={styles.logoText}>SearchGoogle</span>
         </div>
         <p className={styles.tagline}>
-          Busca de produtos no Google Shopping via Apify — preços, vendedores e avaliações por
-          palavra-chave
+          Busca no Google (com localização/idioma simulados) via Apify — encontra os anúncios de
+          produtos (Sponsored Products) que aparecem embutidos na busca normal
         </p>
       </header>
 
@@ -218,100 +206,64 @@ export default function SearchPage() {
           {queries.length > 0 && (
             <div className={styles.queryCount}>
               {queries.length} busca{queries.length !== 1 ? "s" : ""} detectada
-              {queries.length !== 1 ? "s" : ""} — 1 run Apify por busca
+              {queries.length !== 1 ? "s" : ""} — todas em 1 run Apify
             </div>
           )}
 
           <div className={styles.filtersBlock}>
             <div className={styles.cardLabel}>FILTROS (opcional)</div>
             <p className={styles.filtersHint}>
-              Se preencher País (gl), preencha também o Domínio Google correspondente (ex:
-              gl=de → google.de). Buscar em google.com pedindo resultados de outro país pode
-              retornar poucos ou nenhum produto.
+              Localização exata usa o parâmetro UULE do Google — gere o código em{" "}
+              <a
+                href="https://padavvan.github.io/"
+                target="_blank"
+                rel="noreferrer"
+                className={styles.filtersHintLink}
+              >
+                padavvan.github.io
+              </a>{" "}
+              a partir do nome da cidade/região. &quot;Anúncios pagos&quot; é um add-on cobrado à
+              parte pela Apify (por página, mesmo sem achar anúncios) — é o que garante os
+              Sponsored Products aparecerem de forma confiável.
             </p>
             <div className={styles.filtersGrid}>
               <label className={styles.filterField}>
-                <span className={styles.filterFieldLabel}>Localização</span>
+                <span className={styles.filterFieldLabel}>País (countryCode)</span>
                 <input
                   className={styles.filterFieldInput}
-                  value={filters.location}
-                  onChange={(e) => setFilterField("location", e.target.value)}
-                  placeholder="Berlin, Germany"
-                />
-              </label>
-              <label className={styles.filterField}>
-                <span className={styles.filterFieldLabel}>País (gl)</span>
-                <input
-                  className={styles.filterFieldInput}
-                  value={filters.gl}
-                  onChange={(e) => setFilterField("gl", e.target.value)}
+                  value={filters.countryCode}
+                  onChange={(e) => setFilterField("countryCode", e.target.value)}
                   placeholder="de"
                   maxLength={2}
                 />
               </label>
               <label className={styles.filterField}>
-                <span className={styles.filterFieldLabel}>Idioma (hl)</span>
+                <span className={styles.filterFieldLabel}>Idioma da busca</span>
                 <input
                   className={styles.filterFieldInput}
-                  value={filters.hl}
-                  onChange={(e) => setFilterField("hl", e.target.value)}
+                  value={filters.searchLanguage}
+                  onChange={(e) => setFilterField("searchLanguage", e.target.value)}
                   placeholder="de"
-                  maxLength={2}
+                  maxLength={5}
                 />
               </label>
               <label className={styles.filterField}>
-                <span className={styles.filterFieldLabel}>Domínio Google</span>
+                <span className={styles.filterFieldLabel}>Idioma da interface</span>
                 <input
                   className={styles.filterFieldInput}
-                  value={filters.googleDomain}
-                  onChange={(e) => setFilterField("googleDomain", e.target.value)}
-                  placeholder="google.de"
+                  value={filters.languageCode}
+                  onChange={(e) => setFilterField("languageCode", e.target.value)}
+                  placeholder="de"
+                  maxLength={5}
                 />
               </label>
               <label className={styles.filterField}>
-                <span className={styles.filterFieldLabel}>Dispositivo</span>
-                <select
-                  className={styles.filterFieldInput}
-                  value={filters.device}
-                  onChange={(e) => setFilterField("device", e.target.value as Filters["device"])}
-                >
-                  <option value="desktop">Desktop</option>
-                  <option value="tablet">Tablet</option>
-                  <option value="mobile">Mobile</option>
-                </select>
-              </label>
-              <label className={styles.filterField}>
-                <span className={styles.filterFieldLabel}>Ordenar por</span>
-                <select
-                  className={styles.filterFieldInput}
-                  value={filters.sortBy}
-                  onChange={(e) => setFilterField("sortBy", e.target.value as Filters["sortBy"])}
-                >
-                  <option value="">Relevância</option>
-                  <option value="1">Preço: menor p/ maior</option>
-                  <option value="2">Preço: maior p/ menor</option>
-                </select>
-              </label>
-              <label className={styles.filterField}>
-                <span className={styles.filterFieldLabel}>Preço mínimo</span>
+                <span className={styles.filterFieldLabel}>Localização exata (UULE)</span>
                 <input
                   className={styles.filterFieldInput}
-                  type="number"
-                  min={0}
-                  value={filters.minPrice}
-                  onChange={(e) => setFilterField("minPrice", e.target.value)}
-                  placeholder="0"
-                />
-              </label>
-              <label className={styles.filterField}>
-                <span className={styles.filterFieldLabel}>Preço máximo</span>
-                <input
-                  className={styles.filterFieldInput}
-                  type="number"
-                  min={0}
-                  value={filters.maxPrice}
-                  onChange={(e) => setFilterField("maxPrice", e.target.value)}
-                  placeholder="1000"
+                  value={filters.locationUule}
+                  onChange={(e) => setFilterField("locationUule", e.target.value)}
+                  placeholder="w+CAIQICIGQmVybGlu"
                 />
               </label>
               <label className={styles.filterField}>
@@ -320,8 +272,8 @@ export default function SearchPage() {
                   className={styles.filterFieldInput}
                   type="number"
                   min={0}
-                  value={filters.maxPages}
-                  onChange={(e) => setFilterField("maxPages", e.target.value)}
+                  value={filters.maxPagesPerQuery}
+                  onChange={(e) => setFilterField("maxPagesPerQuery", e.target.value)}
                   placeholder="1"
                 />
               </label>
@@ -331,19 +283,19 @@ export default function SearchPage() {
                 <input
                   className="checkbox"
                   type="checkbox"
-                  checked={filters.freeShipping}
-                  onChange={(e) => setFilterField("freeShipping", e.target.checked)}
+                  checked={filters.mobileResults}
+                  onChange={(e) => setFilterField("mobileResults", e.target.checked)}
                 />
-                Só frete grátis
+                Simular celular
               </label>
               <label className={styles.checkboxLabel}>
                 <input
                   className="checkbox"
                   type="checkbox"
-                  checked={filters.onSale}
-                  onChange={(e) => setFilterField("onSale", e.target.checked)}
+                  checked={filters.focusOnPaidAds}
+                  onChange={(e) => setFilterField("focusOnPaidAds", e.target.checked)}
                 />
-                Só em promoção
+                Anúncios pagos (add-on, custo extra)
               </label>
               <label className={styles.checkboxLabel}>
                 <input
@@ -493,7 +445,7 @@ export default function SearchPage() {
           </>
         )}
       </main>
-      <footer className={styles.footer}>Powered by Apify (Google Shopping)</footer>
+      <footer className={styles.footer}>Powered by Apify (Google Search Scraper)</footer>
     </div>
   );
 }

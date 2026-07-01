@@ -5,38 +5,45 @@ import { authOptions } from "@/lib/auth";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-// Actor: johnvc/google-shopping-api-google-shopping-products-prices-deals
-// Input schema aceita apenas uma busca por run (campo obrigatório "q"), sem
-// suporte a batch — por isso rodamos um run por query, sequencialmente.
+// Actor: apify/google-search-scraper (nFJndFXA5zjCTuudP)
+// Busca normal do Google (não a aba Shopping) com geo/idioma configuráveis,
+// igual ao searchfromanywhere.com. O campo "paidProducts" no dataset é o
+// carrossel de "Sponsored Products" (anúncios com foto/preço) que aparece
+// embutido na busca normal — diferente da aba Shopping, esse carrossel
+// costuma trazer lojas pequenas/Shopify, não só grandes marketplaces.
 //
-// IMPORTANTE: cada item do dataset é uma PÁGINA de resultados, não um
-// produto. Os produtos ficam aninhados em `shopping_results[]` (confirmado
-// via teste real no console da Apify — um run com max_pages=1 gera 1 item de
-// dataset contendo ~40 produtos dentro de shopping_results). Tratar o
-// dataset como lista de produtos direto (como antes) sempre resultava em 0,
-// já que o item de página não tem campo "title".
-type ApifyShoppingProduct = {
-  position?: number;
+// IMPORTANTE: os nomes de campo exatos de paidProducts não estão 100%
+// documentados publicamente. O mapeamento abaixo é best-effort (várias
+// variantes de nome tentadas) — ajuste normalize() se um run real mostrar
+// campos diferentes (ver console.log de diagnóstico abaixo).
+type ApifyPaidProduct = {
   title?: string;
-  source?: string;
+  position?: number;
   price?: string;
+  extractedPrice?: number;
   extracted_price?: number;
+  oldPrice?: string;
   old_price?: string;
-  extracted_old_price?: number;
   rating?: number;
   reviews?: number;
-  extensions?: string[] | string;
+  reviewsCount?: number;
+  source?: string;
+  merchant?: string;
+  seller?: string;
+  link?: string;
+  productLink?: string;
+  product_link?: string;
+  url?: string;
   thumbnail?: string;
   thumbnails?: string[];
-  product_link?: string;
-  link?: string;
+  image?: string;
   tag?: string;
-  snippet?: string;
+  badge?: string;
 };
 
-type ApifyPageItem = {
-  page_number?: number;
-  shopping_results?: ApifyShoppingProduct[];
+type ApifySearchDatasetItem = {
+  searchQuery?: { term?: string };
+  paidProducts?: ApifyPaidProduct[];
 };
 
 export type ShoppingResult = {
@@ -60,46 +67,43 @@ export type ShoppingResult = {
 
 type FailedQuery = { query: string; error: string };
 
-// Espelha os campos opcionais do actor (ver console.apify.com -> Input).
+// Espelha os campos do actor (ver console.apify.com -> Input).
 export type SearchFilters = {
-  location?: string;
-  gl?: string;
-  hl?: string;
-  google_domain?: string;
-  device?: "desktop" | "tablet" | "mobile";
-  min_price?: number;
-  max_price?: number;
-  sort_by?: 1 | 2;
-  free_shipping?: boolean;
-  on_sale?: boolean;
-  max_pages?: number;
+  countryCode?: string;
+  searchLanguage?: string;
+  languageCode?: string;
+  locationUule?: string;
+  mobileResults?: boolean;
+  maxPagesPerQuery?: number;
+  focusOnPaidAds?: boolean;
 };
 
-function buildActorInput(query: string, filters: SearchFilters | undefined) {
-  const input: Record<string, unknown> = { q: query, max_pages: filters?.max_pages ?? 1 };
-  if (filters?.location) input.location = filters.location;
-  if (filters?.gl) input.gl = filters.gl;
-  if (filters?.hl) input.hl = filters.hl;
-  if (filters?.google_domain) input.google_domain = filters.google_domain;
-  if (filters?.device) input.device = filters.device;
-  if (filters?.min_price != null) input.min_price = filters.min_price;
-  if (filters?.max_price != null) input.max_price = filters.max_price;
-  if (filters?.sort_by) input.sort_by = filters.sort_by;
-  if (filters?.free_shipping) input.free_shipping = true;
-  if (filters?.on_sale) input.on_sale = true;
+function buildActorInput(queries: string[], filters: SearchFilters | undefined) {
+  const input: Record<string, unknown> = {
+    queries: queries.join("\n"),
+    maxPagesPerQuery: filters?.maxPagesPerQuery ?? 1,
+    // Sem isso o actor pode não extrair os anúncios de forma confiável —
+    // é literalmente o motivo de usarmos esse actor (add-on pago, ver README).
+    focusOnPaidAds: filters?.focusOnPaidAds ?? true
+  };
+  if (filters?.countryCode) input.countryCode = filters.countryCode;
+  if (filters?.searchLanguage) input.searchLanguage = filters.searchLanguage;
+  if (filters?.languageCode) input.languageCode = filters.languageCode;
+  if (filters?.locationUule) input.locationUule = filters.locationUule;
+  if (filters?.mobileResults) input.mobileResults = true;
   return input;
 }
 
 async function runApifyActor(
-  query: string,
+  queries: string[],
   filters: SearchFilters | undefined,
   actorId: string,
   token: string
-): Promise<ApifyPageItem[]> {
+): Promise<ApifySearchDatasetItem[]> {
   const runRes = await fetch(`https://api.apify.com/v2/acts/${actorId}/runs?token=${token}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildActorInput(query, filters))
+    body: JSON.stringify(buildActorInput(queries, filters))
   });
 
   const run = await runRes.json();
@@ -112,13 +116,11 @@ async function runApifyActor(
     await new Promise((r) => setTimeout(r, 3000));
     const s = await fetch(`https://api.apify.com/v2/actor-runs/${runId}?token=${token}`);
     status = (await s.json())?.data?.status;
-    if (++attempts > 60) throw new Error("Timeout: Apify demorou demais");
+    if (++attempts > 90) throw new Error("Timeout: Apify demorou demais");
   }
 
   if (status !== "SUCCEEDED") throw new Error("Apify falhou com status: " + status);
 
-  // Pequena folga: o dataset do run pode levar um instante para ficar
-  // disponível para leitura logo após o status virar SUCCEEDED.
   await new Promise((r) => setTimeout(r, 1500));
 
   const datasetRes = await fetch(
@@ -130,41 +132,51 @@ async function runApifyActor(
   return datasetRes.json();
 }
 
-function normalize(query: string, pages: ApifyPageItem[]): ShoppingResult[] {
-  const products = pages.flatMap((page) => page.shopping_results ?? []);
-  return products
-    .filter((it) => it.title)
-    .map((it) => ({
-      query,
-      position: it.position ?? null,
-      title: it.title ?? "",
-      productLink: it.product_link ?? it.link ?? "",
-      thumbnail: it.thumbnail ?? it.thumbnails?.[0] ?? null,
-      price: it.price ?? null,
-      extractedPrice: it.extracted_price ?? null,
-      oldPrice: it.old_price ?? null,
-      rating: it.rating ?? null,
-      reviews: it.reviews ?? null,
-      source: it.source ?? null,
-      tag: it.tag ?? null,
-      extensions: Array.isArray(it.extensions)
-        ? it.extensions
-        : it.extensions
-          ? [it.extensions]
-          : [],
-      snippet: it.snippet ?? null,
-      merchantUrl: null,
-      isShopify: null
-    }));
+function normalize(queries: string[], items: ApifySearchDatasetItem[]): ShoppingResult[] {
+  const results: ShoppingResult[] = [];
+  items.forEach((item, idx) => {
+    const query = item.searchQuery?.term ?? queries[idx] ?? "desconhecida";
+    for (const p of item.paidProducts ?? []) {
+      if (!p.title) continue;
+      results.push({
+        query,
+        position: p.position ?? null,
+        title: p.title,
+        productLink: p.link ?? p.productLink ?? p.product_link ?? p.url ?? "",
+        thumbnail: p.thumbnail ?? p.thumbnails?.[0] ?? p.image ?? null,
+        price: p.price ?? null,
+        extractedPrice: p.extractedPrice ?? p.extracted_price ?? null,
+        oldPrice: p.oldPrice ?? p.old_price ?? null,
+        rating: p.rating ?? null,
+        reviews: p.reviews ?? p.reviewsCount ?? null,
+        source: p.source ?? p.merchant ?? p.seller ?? null,
+        tag: p.tag ?? p.badge ?? null,
+        extensions: [],
+        snippet: null,
+        merchantUrl: null,
+        isShopify: null
+      });
+    }
+  });
+  return results;
 }
 
 const MERCHANT_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-// O product_link do Google Shopping é uma página intermediária (não a loja).
-// O destino real fica no atributo data-redirect-url do HTML — confirmado
-// inspecionando a página real (sem precisar de browser/JS).
+// O link de um anúncio pode ser uma página intermediária do Google (com o
+// destino real no atributo data-redirect-url) ou já ser o link direto da
+// loja — tratamos os dois casos.
 async function resolveMerchantUrl(productLink: string): Promise<string | null> {
+  if (!productLink) return null;
+  let host: string;
+  try {
+    host = new URL(productLink).hostname;
+  } catch {
+    return null;
+  }
+  if (!host.includes("google.")) return productLink;
+
   try {
     const res = await fetch(productLink, {
       headers: { "User-Agent": MERCHANT_UA, "Accept-Language": "de-DE,de;q=0.9,en;q=0.8" },
@@ -257,21 +269,22 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "APIFY_SEARCH_ACTOR_ID não configurado" }, { status: 500 });
   }
 
-  const results: ShoppingResult[] = [];
   const failedQueries: FailedQuery[] = [];
+  let results: ShoppingResult[] = [];
 
-  for (const query of queries) {
-    try {
-      const pages = await runApifyActor(query, filters, actorId, token);
-      const normalized = normalize(query, pages);
+  try {
+    const items = await runApifyActor(queries, filters, actorId, token);
+    results = normalize(queries, items);
+    console.log(`[search] ${queries.length} busca(s) -> ${results.length} produtos (ads)`);
+    if (items[0]) {
       console.log(
-        `[search] "${query}" -> ${pages.length} página(s), ${normalized.length} produtos`
+        "[search] amostra do 1o item do dataset (debug):",
+        JSON.stringify(items[0]).slice(0, 1500)
       );
-      results.push(...normalized);
-    } catch (err) {
-      console.error(`[search] "${query}" falhou:`, err);
-      failedQueries.push({ query, error: (err as Error).message });
     }
+  } catch (err) {
+    console.error("[search] run falhou:", err);
+    for (const q of queries) failedQueries.push({ query: q, error: (err as Error).message });
   }
 
   let finalResults = results;

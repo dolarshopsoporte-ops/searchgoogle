@@ -1,11 +1,11 @@
 # SearchGoogle
 
-SearchGoogle é uma ferramenta de mineração de produtos via Google Shopping. O operador informa termos de busca (nichos, palavras-chave) e a ferramenta roda o actor Apify [`google-shopping-api-google-shopping-products-prices-deals`](https://apify.com/johnvc/google-shopping-api-google-shopping-products-prices-deals), retornando produtos com preço, vendedor, avaliação e frete para análise e filtragem.
+SearchGoogle é uma ferramenta de mineração de lojas/produtos via os anúncios de "Sponsored Products" que aparecem embutidos numa busca normal do Google (não a aba Shopping — essa é dominada por grandes marketplaces e raramente mostra lojas pequenas/Shopify). O operador informa termos de busca, opcionalmente simula um país/idioma/localização específicos (como o [searchfromanywhere.com](https://searchfromanywhere.com/)), e a ferramenta roda o actor Apify oficial [`google-search-scraper`](https://apify.com/apify/google-search-scraper), retornando os produtos anunciados (`paidProducts`) para análise e filtragem.
 
 ## Arquitetura
 
 ```
-Next.js @ Vercel (UI + API)  ◀──HTTP──▶  Apify (Google Shopping Scraper)
+Next.js @ Vercel (UI + API)  ◀──HTTP──▶  Apify (Google Search Scraper)
          │
          ▼
    PostgreSQL (Neon) — apenas auth (User)
@@ -42,17 +42,19 @@ Ver `.env.example`. Resumo:
 | `NEXTAUTH_SECRET` | Segredo JWT |
 | `BOOTSTRAP_USER_EMAIL` / `BOOTSTRAP_USER_PASSWORD` | Cria usuário inicial no primeiro deploy |
 | `APIFY_TOKEN` | Token da conta Apify |
-| `APIFY_SEARCH_ACTOR_ID` | ID do actor Google Shopping Scraper (`U02ytMsu6ynITFJHX` por padrão neste projeto). **Preencher antes do deploy** — sem ele a busca retorna erro 500. |
+| `APIFY_SEARCH_ACTOR_ID` | ID do actor Google Search Scraper oficial (`nFJndFXA5zjCTuudP` por padrão neste projeto). **Preencher antes do deploy** — sem ele a busca retorna erro 500. |
 
 ### Sobre o actor Apify
 
-O actor aceita **uma busca por run** (campo obrigatório `q`), sem suporte a batch. Por isso a rota `/api/search` roda um run por termo digitado (sequencialmente: `POST /v2/acts/{actorId}/runs` com `{ q, max_pages: 1 }` → poll de status → `GET /dataset/items`), e junta os resultados de todos. Buscas que falharem individualmente aparecem em `failedQueries` sem derrubar as demais.
+Diferente do actor de Google Shopping usado numa versão anterior deste projeto, o `google-search-scraper` aceita **todas as buscas em um único run** (campo `queries`, uma por linha) — a rota `/api/search` roda só um `POST /v2/acts/{actorId}/runs` para o lote inteiro, faz poll de status e lê `GET /dataset/items`. Isso simplifica o fluxo mas também significa que uma falha na run derruba todas as buscas do lote juntas (sem isolamento por busca).
 
-Cada item do dataset é uma **página** de resultados (`page_number`, `search_metadata`, etc.), não um produto — os produtos ficam aninhados em `shopping_results[]`. Campos retornados por produto (ver `normalize()` em `src/app/api/search/route.ts`): `title`, `product_link`, `thumbnail`/`thumbnails[]`, `price`/`extracted_price`, `old_price`, `rating`, `reviews`, `source` (vendedor), `tag` (badge tipo "SALE"/"NIEDRIGER PREIS"), `extensions[]`, `position`. Não existe campo de delivery/shipping neste actor.
+Cada item do dataset corresponde a uma busca processada e traz um campo `paidProducts[]` — o carrossel de anúncios de produto (foto + preço) que aparece embutido na busca normal do Google, não a aba Shopping dedicada. **Atenção:** os nomes exatos de campo dentro de `paidProducts` não estavam 100% documentados publicamente no momento da integração; `normalize()` em `src/app/api/search/route.ts` tenta várias variantes de nome e loga uma amostra do primeiro item no console (Vercel → Logs) para facilitar ajuste caso o formato real divirja — mesmo processo usado para depurar o actor anterior.
+
+Para extração confiável de anúncios é necessário habilitar `focusOnPaidAds` (ligado por padrão na UI) — é um **add-on pago à parte** da Apify, cobrado por página processada mesmo se nenhum anúncio for encontrado.
 
 ### Filtros disponíveis na UI
 
-A UI expõe os filtros opcionais do actor (aplicados a todas as buscas do lote): Localização (`location`), País (`gl`), Idioma (`hl`), Domínio Google (`google_domain`), Dispositivo (`device`), Preço mínimo/máximo, Ordenação por preço (`sort_by`), Só frete grátis (`free_shipping`), Só em promoção (`on_sale`) e Páginas por busca (`max_pages`, ~40 produtos por página). **Importante:** se preencher `gl`, preencha também `google_domain` correspondente (ex: `gl=de` → `google.de`) — buscar em `google.com` pedindo resultados de outro país retorna poucos/nenhum produto.
+País (`countryCode`), Idioma da busca (`searchLanguage`), Idioma da interface (`languageCode`), Localização exata via parâmetro UULE do Google (`locationUule` — gerar em [padavvan.github.io](https://padavvan.github.io/)), Simular celular (`mobileResults`), Páginas por busca (`maxPagesPerQuery`) e Anúncios pagos (`focusOnPaidAds`, add-on cobrado à parte).
 
 ### Filtro "Só lojas Shopify"
 
