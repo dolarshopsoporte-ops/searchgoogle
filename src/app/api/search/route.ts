@@ -5,53 +5,61 @@ import { authOptions } from "@/lib/auth";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-type OrganicResult = {
-  title?: string;
-  url?: string;
-  description?: string;
+// Actor: johnvc/google-shopping-api-google-shopping-products-prices-deals
+// Input schema aceita apenas uma busca por run (campo obrigatório "q"), sem
+// suporte a batch — por isso rodamos um run por query, sequencialmente.
+type ApifyShoppingItem = {
   position?: number;
+  title?: string;
+  source?: string;
+  seller?: string;
+  price?: string;
+  extracted_price?: number;
+  extractedPrice?: number;
+  old_price?: string;
+  rating?: number;
+  reviews?: number;
+  review_count?: number;
+  delivery?: string;
+  shipping?: string;
+  extensions?: string[] | string;
+  product_link?: string;
+  productLink?: string;
+  link?: string;
+  thumbnail?: string;
+  image?: string;
+  snippet?: string;
+  description?: string;
 };
 
-// Formato de dataset item aceito de forma flexível: cobre tanto o shape
-// comum de actors de "Google Search Scraper" (searchQuery + organicResults[])
-// quanto um shape já achatado (query/url/title direto no item), já que o
-// actor real (APIFY_SEARCH_ACTOR_ID) ainda não está definido.
-type ApifyDatasetItem = {
-  searchQuery?: { term?: string };
-  query?: string;
-  organicResults?: OrganicResult[];
-  title?: string;
-  url?: string;
-  description?: string;
-  position?: number;
-};
-
-export type SearchResultItem = {
+export type ShoppingResult = {
   query: string;
   position: number | null;
   title: string;
-  url: string;
-  domain: string;
-  snippet: string;
+  productLink: string;
+  thumbnail: string | null;
+  price: string | null;
+  extractedPrice: number | null;
+  oldPrice: string | null;
+  rating: number | null;
+  reviews: number | null;
+  source: string | null;
+  delivery: string | null;
+  extensions: string[];
+  snippet: string | null;
 };
 
-function domainOf(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return "";
-  }
-}
+type FailedQuery = { query: string; error: string };
 
 async function runApifyActor(
-  queries: string[],
+  query: string,
   actorId: string,
   token: string
-): Promise<ApifyDatasetItem[]> {
+): Promise<ApifyShoppingItem[]> {
   const runRes = await fetch(`https://api.apify.com/v2/acts/${actorId}/runs?token=${token}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ queries: queries.join("\n") })
+    body: JSON.stringify({ q: query, max_pages: 1 })
   });
 
   const run = await runRes.json();
@@ -61,10 +69,10 @@ async function runApifyActor(
   let status = "RUNNING";
   let attempts = 0;
   while (status === "RUNNING" || status === "READY") {
-    await new Promise((r) => setTimeout(r, 4000));
+    await new Promise((r) => setTimeout(r, 3000));
     const s = await fetch(`https://api.apify.com/v2/actor-runs/${runId}?token=${token}`);
     status = (await s.json())?.data?.status;
-    if (++attempts > 45) throw new Error("Timeout: Apify demorou demais");
+    if (++attempts > 60) throw new Error("Timeout: Apify demorou demais");
   }
 
   if (status !== "SUCCEEDED") throw new Error("Apify falhou com status: " + status);
@@ -75,34 +83,29 @@ async function runApifyActor(
   return datasetRes.json();
 }
 
-function flatten(items: ApifyDatasetItem[]): SearchResultItem[] {
-  const out: SearchResultItem[] = [];
-  for (const item of items) {
-    const query = item.searchQuery?.term ?? item.query ?? "";
-    if (item.organicResults?.length) {
-      for (const r of item.organicResults) {
-        if (!r.url) continue;
-        out.push({
-          query,
-          position: r.position ?? null,
-          title: r.title ?? "",
-          url: r.url,
-          domain: domainOf(r.url),
-          snippet: r.description ?? ""
-        });
-      }
-    } else if (item.url) {
-      out.push({
-        query,
-        position: item.position ?? null,
-        title: item.title ?? "",
-        url: item.url,
-        domain: domainOf(item.url),
-        snippet: item.description ?? ""
-      });
-    }
-  }
-  return out;
+function normalize(query: string, items: ApifyShoppingItem[]): ShoppingResult[] {
+  return items
+    .filter((it) => it.title && (it.product_link || it.productLink || it.link))
+    .map((it) => ({
+      query,
+      position: it.position ?? null,
+      title: it.title ?? "",
+      productLink: it.product_link ?? it.productLink ?? it.link ?? "",
+      thumbnail: it.thumbnail ?? it.image ?? null,
+      price: it.price ?? null,
+      extractedPrice: it.extracted_price ?? it.extractedPrice ?? null,
+      oldPrice: it.old_price ?? null,
+      rating: it.rating ?? null,
+      reviews: it.reviews ?? it.review_count ?? null,
+      source: it.source ?? it.seller ?? null,
+      delivery: it.delivery ?? it.shipping ?? null,
+      extensions: Array.isArray(it.extensions)
+        ? it.extensions
+        : it.extensions
+          ? [it.extensions]
+          : [],
+      snippet: it.snippet ?? it.description ?? null
+    }));
 }
 
 export async function POST(req: Request) {
@@ -124,12 +127,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "APIFY_SEARCH_ACTOR_ID não configurado" }, { status: 500 });
   }
 
-  try {
-    const items = await runApifyActor(queries, actorId, token);
-    const results = flatten(items);
-    return NextResponse.json({ results });
-  } catch (err) {
-    console.error("search error:", err);
-    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
+  const results: ShoppingResult[] = [];
+  const failedQueries: FailedQuery[] = [];
+
+  for (const query of queries) {
+    try {
+      const items = await runApifyActor(query, actorId, token);
+      results.push(...normalize(query, items));
+    } catch (err) {
+      failedQueries.push({ query, error: (err as Error).message });
+    }
   }
+
+  return NextResponse.json({ results, failedQueries });
 }

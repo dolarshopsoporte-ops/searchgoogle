@@ -1,11 +1,11 @@
 # SearchGoogle
 
-SearchGoogle é uma ferramenta de descoberta de lojas/produtos via busca em massa no Google. O operador informa termos de busca (nichos, palavras-chave) e a ferramenta roda um actor Apify que executa a busca no Google, retornando os resultados orgânicos (título, URL, domínio, snippet) para análise e filtragem.
+SearchGoogle é uma ferramenta de mineração de produtos via Google Shopping. O operador informa termos de busca (nichos, palavras-chave) e a ferramenta roda o actor Apify [`google-shopping-api-google-shopping-products-prices-deals`](https://apify.com/johnvc/google-shopping-api-google-shopping-products-prices-deals), retornando produtos com preço, vendedor, avaliação e frete para análise e filtragem.
 
 ## Arquitetura
 
 ```
-Next.js @ Vercel (UI + API)  ◀──HTTP──▶  Apify (actor de busca no Google)
+Next.js @ Vercel (UI + API)  ◀──HTTP──▶  Apify (Google Shopping Scraper)
          │
          ▼
    PostgreSQL (Neon) — apenas auth (User)
@@ -42,11 +42,13 @@ Ver `.env.example`. Resumo:
 | `NEXTAUTH_SECRET` | Segredo JWT |
 | `BOOTSTRAP_USER_EMAIL` / `BOOTSTRAP_USER_PASSWORD` | Cria usuário inicial no primeiro deploy |
 | `APIFY_TOKEN` | Token da conta Apify |
-| `APIFY_SEARCH_ACTOR_ID` | ID do actor Apify usado para rodar a busca no Google. **Preencher antes do deploy** — sem ele a busca retorna erro 500. |
+| `APIFY_SEARCH_ACTOR_ID` | ID do actor Google Shopping Scraper (`U02ytMsu6ynITFJHX` por padrão neste projeto). **Preencher antes do deploy** — sem ele a busca retorna erro 500. |
 
 ### Sobre o actor Apify
 
-A rota `/api/search` envia `{ queries: "<termo1>\n<termo2>..." }` para `POST /v2/acts/{actorId}/runs` e espera um dataset compatível com o padrão de actors "Google Search Results Scraper" (ex: um item por query, com `searchQuery.term` e `organicResults[]` contendo `title`/`url`/`description`/`position`). O parser em `src/app/api/search/route.ts` também aceita um shape já achatado (`query`/`title`/`url`/`description` direto no item) caso o actor escolhido retorne diferente — ajuste `flatten()` se o formato do actor real divergir.
+O actor aceita **uma busca por run** (campo obrigatório `q`), sem suporte a batch. Por isso a rota `/api/search` roda um run por termo digitado (sequencialmente: `POST /v2/acts/{actorId}/runs` com `{ q, max_pages: 1 }` → poll de status → `GET /dataset/items`), e junta os resultados de todos. Buscas que falharem individualmente aparecem em `failedQueries` sem derrubar as demais.
+
+Campos retornados por produto (ver `normalize()` em `src/app/api/search/route.ts`): `title`, `product_link`, `thumbnail`, `price`/`extracted_price`, `old_price`, `rating`, `reviews`, `source` (vendedor), `delivery`, `extensions` (badges tipo "Sponsored"/desconto), `position`.
 
 ## Deploy
 
