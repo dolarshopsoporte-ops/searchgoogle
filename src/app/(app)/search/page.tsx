@@ -23,13 +23,59 @@ type ShoppingResult = {
 
 type FailedQuery = { query: string; error: string };
 
+type Filters = {
+  location: string;
+  gl: string;
+  hl: string;
+  googleDomain: string;
+  device: "desktop" | "tablet" | "mobile";
+  minPrice: string;
+  maxPrice: string;
+  sortBy: "" | "1" | "2";
+  freeShipping: boolean;
+  onSale: boolean;
+  maxPages: string;
+};
+
+const DEFAULT_FILTERS: Filters = {
+  location: "",
+  gl: "",
+  hl: "",
+  googleDomain: "",
+  device: "desktop",
+  minPrice: "",
+  maxPrice: "",
+  sortBy: "",
+  freeShipping: false,
+  onSale: false,
+  maxPages: "1"
+};
+
+function filtersToPayload(f: Filters) {
+  const payload: Record<string, unknown> = {};
+  if (f.location.trim()) payload.location = f.location.trim();
+  if (f.gl.trim()) payload.gl = f.gl.trim();
+  if (f.hl.trim()) payload.hl = f.hl.trim();
+  if (f.googleDomain.trim()) payload.google_domain = f.googleDomain.trim();
+  if (f.device !== "desktop") payload.device = f.device;
+  if (f.minPrice.trim()) payload.min_price = Number(f.minPrice);
+  if (f.maxPrice.trim()) payload.max_price = Number(f.maxPrice);
+  if (f.sortBy) payload.sort_by = Number(f.sortBy);
+  if (f.freeShipping) payload.free_shipping = true;
+  if (f.onSale) payload.on_sale = true;
+  const maxPages = Number(f.maxPages);
+  payload.max_pages = Number.isFinite(maxPages) && maxPages >= 0 ? maxPages : 1;
+  return payload;
+}
+
 async function fetchResults(
-  queries: string[]
+  queries: string[],
+  filters: Filters
 ): Promise<{ results: ShoppingResult[]; failedQueries: FailedQuery[] }> {
   const res = await fetch("/api/search", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ queries })
+    body: JSON.stringify({ queries, filters: filtersToPayload(filters) })
   });
   if (!res.ok) {
     const body = await res.json().catch(() => null);
@@ -87,12 +133,17 @@ function downloadCsv(rows: ShoppingResult[]) {
 export default function SearchPage() {
   const [raw, setRaw] = useState("");
   const [filter, setFilter] = useState("");
+  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [step, setStep] = useState<"idle" | "loading" | "results">("idle");
   const [results, setResults] = useState<ShoppingResult[]>([]);
   const [failedQueries, setFailedQueries] = useState<FailedQuery[]>([]);
   const [error, setError] = useState("");
 
   const queries = [...new Set(raw.split("\n").map((q) => q.trim()).filter(Boolean))];
+
+  function setFilterField<K extends keyof Filters>(key: K, value: Filters[K]) {
+    setFilters((prev) => ({ ...prev, [key]: value }));
+  }
 
   async function handleSearch() {
     if (!queries.length) return;
@@ -101,7 +152,7 @@ export default function SearchPage() {
     setResults([]);
     setFailedQueries([]);
     try {
-      const data = await fetchResults(queries);
+      const data = await fetchResults(queries, filters);
       setResults(data.results);
       setFailedQueries(data.failedQueries || []);
       setStep("results");
@@ -155,6 +206,127 @@ export default function SearchPage() {
               {queries.length !== 1 ? "s" : ""} — 1 run Apify por busca
             </div>
           )}
+
+          <div className={styles.filtersBlock}>
+            <div className={styles.cardLabel}>FILTROS (opcional)</div>
+            <div className={styles.filtersGrid}>
+              <label className={styles.filterField}>
+                <span className={styles.filterFieldLabel}>Localização</span>
+                <input
+                  className={styles.filterFieldInput}
+                  value={filters.location}
+                  onChange={(e) => setFilterField("location", e.target.value)}
+                  placeholder="Berlin, Germany"
+                />
+              </label>
+              <label className={styles.filterField}>
+                <span className={styles.filterFieldLabel}>País (gl)</span>
+                <input
+                  className={styles.filterFieldInput}
+                  value={filters.gl}
+                  onChange={(e) => setFilterField("gl", e.target.value)}
+                  placeholder="de"
+                  maxLength={2}
+                />
+              </label>
+              <label className={styles.filterField}>
+                <span className={styles.filterFieldLabel}>Idioma (hl)</span>
+                <input
+                  className={styles.filterFieldInput}
+                  value={filters.hl}
+                  onChange={(e) => setFilterField("hl", e.target.value)}
+                  placeholder="de"
+                  maxLength={2}
+                />
+              </label>
+              <label className={styles.filterField}>
+                <span className={styles.filterFieldLabel}>Domínio Google</span>
+                <input
+                  className={styles.filterFieldInput}
+                  value={filters.googleDomain}
+                  onChange={(e) => setFilterField("googleDomain", e.target.value)}
+                  placeholder="google.de"
+                />
+              </label>
+              <label className={styles.filterField}>
+                <span className={styles.filterFieldLabel}>Dispositivo</span>
+                <select
+                  className={styles.filterFieldInput}
+                  value={filters.device}
+                  onChange={(e) => setFilterField("device", e.target.value as Filters["device"])}
+                >
+                  <option value="desktop">Desktop</option>
+                  <option value="tablet">Tablet</option>
+                  <option value="mobile">Mobile</option>
+                </select>
+              </label>
+              <label className={styles.filterField}>
+                <span className={styles.filterFieldLabel}>Ordenar por</span>
+                <select
+                  className={styles.filterFieldInput}
+                  value={filters.sortBy}
+                  onChange={(e) => setFilterField("sortBy", e.target.value as Filters["sortBy"])}
+                >
+                  <option value="">Relevância</option>
+                  <option value="1">Preço: menor p/ maior</option>
+                  <option value="2">Preço: maior p/ menor</option>
+                </select>
+              </label>
+              <label className={styles.filterField}>
+                <span className={styles.filterFieldLabel}>Preço mínimo</span>
+                <input
+                  className={styles.filterFieldInput}
+                  type="number"
+                  min={0}
+                  value={filters.minPrice}
+                  onChange={(e) => setFilterField("minPrice", e.target.value)}
+                  placeholder="0"
+                />
+              </label>
+              <label className={styles.filterField}>
+                <span className={styles.filterFieldLabel}>Preço máximo</span>
+                <input
+                  className={styles.filterFieldInput}
+                  type="number"
+                  min={0}
+                  value={filters.maxPrice}
+                  onChange={(e) => setFilterField("maxPrice", e.target.value)}
+                  placeholder="1000"
+                />
+              </label>
+              <label className={styles.filterField}>
+                <span className={styles.filterFieldLabel}>Páginas por busca</span>
+                <input
+                  className={styles.filterFieldInput}
+                  type="number"
+                  min={0}
+                  value={filters.maxPages}
+                  onChange={(e) => setFilterField("maxPages", e.target.value)}
+                  placeholder="1"
+                />
+              </label>
+            </div>
+            <div className={styles.checkboxRow}>
+              <label className={styles.checkboxLabel}>
+                <input
+                  className="checkbox"
+                  type="checkbox"
+                  checked={filters.freeShipping}
+                  onChange={(e) => setFilterField("freeShipping", e.target.checked)}
+                />
+                Só frete grátis
+              </label>
+              <label className={styles.checkboxLabel}>
+                <input
+                  className="checkbox"
+                  type="checkbox"
+                  checked={filters.onSale}
+                  onChange={(e) => setFilterField("onSale", e.target.checked)}
+                />
+                Só em promoção
+              </label>
+            </div>
+          </div>
 
           {error && <div className={styles.errorMsg}>⚠ {error}</div>}
 

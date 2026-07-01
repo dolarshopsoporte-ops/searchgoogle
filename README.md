@@ -50,6 +50,10 @@ O actor aceita **uma busca por run** (campo obrigatório `q`), sem suporte a bat
 
 Campos retornados por produto (ver `normalize()` em `src/app/api/search/route.ts`): `title`, `product_link`, `thumbnail`, `price`/`extracted_price`, `old_price`, `rating`, `reviews`, `source` (vendedor), `delivery`, `extensions` (badges tipo "Sponsored"/desconto), `position`.
 
+### Filtros disponíveis na UI
+
+A UI expõe os filtros opcionais do actor (aplicados a todas as buscas do lote): Localização (`location`), País (`gl`), Idioma (`hl`), Domínio Google (`google_domain`), Dispositivo (`device`), Preço mínimo/máximo, Ordenação por preço (`sort_by`), Só frete grátis (`free_shipping`), Só em promoção (`on_sale`) e Páginas por busca (`max_pages`, ~40 produtos por página).
+
 ## Deploy
 
 ### Vercel (UI + API)

@@ -51,15 +51,46 @@ export type ShoppingResult = {
 
 type FailedQuery = { query: string; error: string };
 
+// Espelha os campos opcionais do actor (ver console.apify.com -> Input).
+export type SearchFilters = {
+  location?: string;
+  gl?: string;
+  hl?: string;
+  google_domain?: string;
+  device?: "desktop" | "tablet" | "mobile";
+  min_price?: number;
+  max_price?: number;
+  sort_by?: 1 | 2;
+  free_shipping?: boolean;
+  on_sale?: boolean;
+  max_pages?: number;
+};
+
+function buildActorInput(query: string, filters: SearchFilters | undefined) {
+  const input: Record<string, unknown> = { q: query, max_pages: filters?.max_pages ?? 1 };
+  if (filters?.location) input.location = filters.location;
+  if (filters?.gl) input.gl = filters.gl;
+  if (filters?.hl) input.hl = filters.hl;
+  if (filters?.google_domain) input.google_domain = filters.google_domain;
+  if (filters?.device) input.device = filters.device;
+  if (filters?.min_price != null) input.min_price = filters.min_price;
+  if (filters?.max_price != null) input.max_price = filters.max_price;
+  if (filters?.sort_by) input.sort_by = filters.sort_by;
+  if (filters?.free_shipping) input.free_shipping = true;
+  if (filters?.on_sale) input.on_sale = true;
+  return input;
+}
+
 async function runApifyActor(
   query: string,
+  filters: SearchFilters | undefined,
   actorId: string,
   token: string
 ): Promise<ApifyShoppingItem[]> {
   const runRes = await fetch(`https://api.apify.com/v2/acts/${actorId}/runs?token=${token}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ q: query, max_pages: 1 })
+    body: JSON.stringify(buildActorInput(query, filters))
   });
 
   const run = await runRes.json();
@@ -114,6 +145,7 @@ export async function POST(req: Request) {
 
   const body = await req.json().catch(() => null);
   const queries: string[] | undefined = body?.queries;
+  const filters: SearchFilters | undefined = body?.filters;
   if (!queries?.length) {
     return NextResponse.json({ error: "Nenhuma busca fornecida" }, { status: 400 });
   }
@@ -132,7 +164,7 @@ export async function POST(req: Request) {
 
   for (const query of queries) {
     try {
-      const items = await runApifyActor(query, actorId, token);
+      const items = await runApifyActor(query, filters, actorId, token);
       results.push(...normalize(query, items));
     } catch (err) {
       failedQueries.push({ query, error: (err as Error).message });

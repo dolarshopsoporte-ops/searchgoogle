@@ -31,6 +31,36 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Custom checkbox */
+.checkbox {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: transparent;
+  cursor: pointer;
+  transition: all 160ms ease;
+  display: inline-grid;
+  place-content: center;
+  flex-shrink: 0;
+}
+.checkbox:hover {
+  border-color: var(--color-silver-dust);
+}
+.checkbox:checked {
+  background: var(--color-polar-white);
+  border-color: var(--color-polar-white);
+}
+.checkbox:checked::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  background: var(--color-midnight-charcoal);
+  clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0, 43% 62%);
+}
+
 @layer components {
   /* Filled Secondary Button — Dark Frost background, Polar White text */
   .btn {

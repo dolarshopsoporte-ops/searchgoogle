@@ -105,6 +105,69 @@
   letter-spacing: 0.071em;
 }
 
+.filtersBlock {
+  margin-top: 24px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+
+.filtersGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 16px;
+}
+
+.filterField {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.filterFieldLabel {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.071em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.filterFieldInput {
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  padding: 8px 12px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.filterFieldInput:focus {
+  border-color: var(--accent);
+}
+
+.filterFieldInput::placeholder {
+  color: var(--muted);
+}
+
+.checkboxRow {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.checkboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--muted2);
+  cursor: pointer;
+}
+
 .btnSearch {
   margin-top: 24px;
   width: 100%;
