@@ -8,12 +8,14 @@ export const maxDuration = 300;
 // Actor: johnvc/google-shopping-api-google-shopping-products-prices-deals
 // Input schema aceita apenas uma busca por run (campo obrigatório "q"), sem
 // suporte a batch — por isso rodamos um run por query, sequencialmente.
-// Campos confirmados no dataset real do actor (ver Output -> Table no console
-// da Apify): position, title, product_link, source, price, extracted_price,
-// old_price, extracted_old_price, rating, reviews, extensions[], thumbnails[],
-// serpapi_thumbnails[], tag (ex: "SALE", "NIEDRIGER PREIS"). Não existe campo
-// de delivery/shipping neste actor.
-type ApifyShoppingItem = {
+//
+// IMPORTANTE: cada item do dataset é uma PÁGINA de resultados, não um
+// produto. Os produtos ficam aninhados em `shopping_results[]` (confirmado
+// via teste real no console da Apify — um run com max_pages=1 gera 1 item de
+// dataset contendo ~40 produtos dentro de shopping_results). Tratar o
+// dataset como lista de produtos direto (como antes) sempre resultava em 0,
+// já que o item de página não tem campo "title".
+type ApifyShoppingProduct = {
   position?: number;
   title?: string;
   source?: string;
@@ -24,11 +26,17 @@ type ApifyShoppingItem = {
   rating?: number;
   reviews?: number;
   extensions?: string[] | string;
+  thumbnail?: string;
   thumbnails?: string[];
   product_link?: string;
   link?: string;
   tag?: string;
   snippet?: string;
+};
+
+type ApifyPageItem = {
+  page_number?: number;
+  shopping_results?: ApifyShoppingProduct[];
 };
 
 export type ShoppingResult = {
@@ -85,7 +93,7 @@ async function runApifyActor(
   filters: SearchFilters | undefined,
   actorId: string,
   token: string
-): Promise<ApifyShoppingItem[]> {
+): Promise<ApifyPageItem[]> {
   const runRes = await fetch(`https://api.apify.com/v2/acts/${actorId}/runs?token=${token}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -120,15 +128,16 @@ async function runApifyActor(
   return datasetRes.json();
 }
 
-function normalize(query: string, items: ApifyShoppingItem[]): ShoppingResult[] {
-  return items
+function normalize(query: string, pages: ApifyPageItem[]): ShoppingResult[] {
+  const products = pages.flatMap((page) => page.shopping_results ?? []);
+  return products
     .filter((it) => it.title)
     .map((it) => ({
       query,
       position: it.position ?? null,
       title: it.title ?? "",
       productLink: it.product_link ?? it.link ?? "",
-      thumbnail: it.thumbnails?.[0] ?? null,
+      thumbnail: it.thumbnail ?? it.thumbnails?.[0] ?? null,
       price: it.price ?? null,
       extractedPrice: it.extracted_price ?? null,
       oldPrice: it.old_price ?? null,
@@ -170,9 +179,12 @@ export async function POST(req: Request) {
 
   for (const query of queries) {
     try {
-      const items = await runApifyActor(query, filters, actorId, token);
-      console.log(`[search] "${query}" -> ${items.length} itens brutos do Apify`);
-      results.push(...normalize(query, items));
+      const pages = await runApifyActor(query, filters, actorId, token);
+      const normalized = normalize(query, pages);
+      console.log(
+        `[search] "${query}" -> ${pages.length} página(s), ${normalized.length} produtos`
+      );
+      results.push(...normalized);
     } catch (err) {
       console.error(`[search] "${query}" falhou:`, err);
       failedQueries.push({ query, error: (err as Error).message });
