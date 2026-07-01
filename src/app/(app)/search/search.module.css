@@ -111,6 +111,13 @@
   padding-top: 16px;
 }
 
+.filtersHint {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 16px;
+  line-height: 1.4;
+}
+
 .filtersGrid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));

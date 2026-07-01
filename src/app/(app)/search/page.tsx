@@ -209,6 +209,11 @@ export default function SearchPage() {
 
           <div className={styles.filtersBlock}>
             <div className={styles.cardLabel}>FILTROS (opcional)</div>
+            <p className={styles.filtersHint}>
+              Se preencher País (gl), preencha também o Domínio Google correspondente (ex:
+              gl=de → google.de). Buscar em google.com pedindo resultados de outro país pode
+              retornar poucos ou nenhum produto.
+            </p>
             <div className={styles.filtersGrid}>
               <label className={styles.filterField}>
                 <span className={styles.filterFieldLabel}>Localização</span>
