@@ -19,6 +19,8 @@ type ShoppingResult = {
   tag: string | null;
   extensions: string[];
   snippet: string | null;
+  merchantUrl: string | null;
+  isShopify: boolean | null;
 };
 
 type FailedQuery = { query: string; error: string };
@@ -70,12 +72,13 @@ function filtersToPayload(f: Filters) {
 
 async function fetchResults(
   queries: string[],
-  filters: Filters
+  filters: Filters,
+  onlyShopify: boolean
 ): Promise<{ results: ShoppingResult[]; failedQueries: FailedQuery[] }> {
   const res = await fetch("/api/search", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ queries, filters: filtersToPayload(filters) })
+    body: JSON.stringify({ queries, filters: filtersToPayload(filters), onlyShopify })
   });
   if (!res.ok) {
     const body = await res.json().catch(() => null);
@@ -94,6 +97,7 @@ function toCsv(rows: ShoppingResult[]): string {
     "rating",
     "reviews",
     "source",
+    "merchant_url",
     "tag",
     "product_link"
   ];
@@ -110,6 +114,7 @@ function toCsv(rows: ShoppingResult[]): string {
         r.rating ?? "",
         r.reviews ?? "",
         r.source ?? "",
+        r.merchantUrl ?? "",
         r.tag ?? "",
         r.productLink
       ]
@@ -130,10 +135,20 @@ function downloadCsv(rows: ShoppingResult[]) {
   URL.revokeObjectURL(url);
 }
 
+function merchantDomain(url: string | null): string {
+  if (!url) return "";
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
 export default function SearchPage() {
   const [raw, setRaw] = useState("");
   const [filter, setFilter] = useState("");
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const [onlyShopify, setOnlyShopify] = useState(false);
   const [step, setStep] = useState<"idle" | "loading" | "results">("idle");
   const [results, setResults] = useState<ShoppingResult[]>([]);
   const [failedQueries, setFailedQueries] = useState<FailedQuery[]>([]);
@@ -152,7 +167,7 @@ export default function SearchPage() {
     setResults([]);
     setFailedQueries([]);
     try {
-      const data = await fetchResults(queries, filters);
+      const data = await fetchResults(queries, filters, onlyShopify);
       setResults(data.results);
       setFailedQueries(data.failedQueries || []);
       setStep("results");
@@ -330,6 +345,15 @@ export default function SearchPage() {
                 />
                 Só em promoção
               </label>
+              <label className={styles.checkboxLabel}>
+                <input
+                  className="checkbox"
+                  type="checkbox"
+                  checked={onlyShopify}
+                  onChange={(e) => setOnlyShopify(e.target.checked)}
+                />
+                Só lojas Shopify (mais lento — verifica cada produto)
+              </label>
             </div>
           </div>
 
@@ -343,7 +367,8 @@ export default function SearchPage() {
             {step === "loading" ? (
               <>
                 <span className={styles.spinner} /> Buscando {queries.length} termo
-                {queries.length !== 1 ? "s" : ""}... (pode levar alguns minutos)
+                {queries.length !== 1 ? "s" : ""}
+                {onlyShopify ? " e verificando Shopify" : ""}... (pode levar alguns minutos)
               </>
             ) : (
               <>
@@ -422,6 +447,11 @@ export default function SearchPage() {
                             )}
                           </div>
                           {item.source && <span className={styles.resultDomain}>{item.source}</span>}
+                          {item.isShopify && (
+                            <span className={styles.tagBadge}>
+                              Shopify{merchantDomain(item.merchantUrl) ? ` · ${merchantDomain(item.merchantUrl)}` : ""}
+                            </span>
+                          )}
                           <div className={styles.priceRow}>
                             {item.price && <span className={styles.price}>{item.price}</span>}
                             {item.oldPrice && (

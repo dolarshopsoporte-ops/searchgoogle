@@ -54,6 +54,8 @@ export type ShoppingResult = {
   tag: string | null;
   extensions: string[];
   snippet: string | null;
+  merchantUrl: string | null;
+  isShopify: boolean | null;
 };
 
 type FailedQuery = { query: string; error: string };
@@ -150,8 +152,88 @@ function normalize(query: string, pages: ApifyPageItem[]): ShoppingResult[] {
         : it.extensions
           ? [it.extensions]
           : [],
-      snippet: it.snippet ?? null
+      snippet: it.snippet ?? null,
+      merchantUrl: null,
+      isShopify: null
     }));
+}
+
+const MERCHANT_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+// O product_link do Google Shopping é uma página intermediária (não a loja).
+// O destino real fica no atributo data-redirect-url do HTML — confirmado
+// inspecionando a página real (sem precisar de browser/JS).
+async function resolveMerchantUrl(productLink: string): Promise<string | null> {
+  try {
+    const res = await fetch(productLink, {
+      headers: { "User-Agent": MERCHANT_UA, "Accept-Language": "de-DE,de;q=0.9,en;q=0.8" },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    const match = html.match(/data-redirect-url="([^"]+)"/);
+    if (!match) return null;
+    return match[1].replace(/&amp;/g, "&");
+  } catch {
+    return null;
+  }
+}
+
+// Heurística best-effort: procura assinaturas comuns de lojas Shopify no
+// HTML da loja e, como fallback, testa o endpoint público /products.json
+// (presente na maioria das lojas Shopify). Pode dar falso negativo se a loja
+// usar proxy/CDN que esconda esses sinais.
+async function checkIsShopify(merchantUrl: string): Promise<boolean> {
+  try {
+    const res = await fetch(merchantUrl, {
+      headers: { "User-Agent": MERCHANT_UA },
+      signal: AbortSignal.timeout(8000)
+    });
+    const html = await res.text();
+    if (/cdn\.shopify\.com|Shopify\.shop\s*=|shopify-features|shopify-digital-wallet/i.test(html)) {
+      return true;
+    }
+    const origin = new URL(merchantUrl).origin;
+    const productsJsonRes = await fetch(`${origin}/products.json`, {
+      headers: { "User-Agent": MERCHANT_UA },
+      signal: AbortSignal.timeout(5000)
+    });
+    if (productsJsonRes.ok) {
+      const data = await productsJsonRes.json().catch(() => null);
+      if (data && Array.isArray(data.products)) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const idx = next++;
+      results[idx] = await fn(items[idx]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+async function annotateShopify(results: ShoppingResult[]): Promise<ShoppingResult[]> {
+  const flags = await mapWithConcurrency(results, 8, async (r) => {
+    const merchantUrl = await resolveMerchantUrl(r.productLink);
+    if (!merchantUrl) return { merchantUrl: null, isShopify: false };
+    const isShopify = await checkIsShopify(merchantUrl);
+    return { merchantUrl, isShopify };
+  });
+  return results.map((r, i) => ({ ...r, ...flags[i] }));
 }
 
 export async function POST(req: Request) {
@@ -161,6 +243,7 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => null);
   const queries: string[] | undefined = body?.queries;
   const filters: SearchFilters | undefined = body?.filters;
+  const onlyShopify: boolean = body?.onlyShopify === true;
   if (!queries?.length) {
     return NextResponse.json({ error: "Nenhuma busca fornecida" }, { status: 400 });
   }
@@ -191,5 +274,13 @@ export async function POST(req: Request) {
     }
   }
 
-  return NextResponse.json({ results, failedQueries });
+  let finalResults = results;
+  if (onlyShopify && results.length > 0) {
+    console.log(`[search] verificando Shopify em ${results.length} produto(s)...`);
+    const annotated = await annotateShopify(results);
+    finalResults = annotated.filter((r) => r.isShopify);
+    console.log(`[search] ${finalResults.length}/${annotated.length} são lojas Shopify`);
+  }
+
+  return NextResponse.json({ results: finalResults, failedQueries });
 }
