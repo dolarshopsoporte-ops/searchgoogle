@@ -16,7 +16,7 @@ type ShoppingResult = {
   rating: number | null;
   reviews: number | null;
   source: string | null;
-  delivery: string | null;
+  tag: string | null;
   extensions: string[];
   snippet: string | null;
 };
@@ -94,7 +94,7 @@ function toCsv(rows: ShoppingResult[]): string {
     "rating",
     "reviews",
     "source",
-    "delivery",
+    "tag",
     "product_link"
   ];
   const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
@@ -110,7 +110,7 @@ function toCsv(rows: ShoppingResult[]): string {
         r.rating ?? "",
         r.reviews ?? "",
         r.source ?? "",
-        r.delivery ?? "",
+        r.tag ?? "",
         r.productLink
       ]
         .map((v) => escape(String(v)))
@@ -429,9 +429,11 @@ export default function SearchPage() {
                               </span>
                             )}
                           </div>
-                          {(item.delivery || item.extensions.length > 0) && (
+                          {(item.tag || item.extensions.length > 0) && (
                             <div className={styles.tagsRow}>
-                              {item.delivery && <span className={styles.metaChip}>{item.delivery}</span>}
+                              {item.tag && (
+                                <span className={styles.tagBadge}>{item.tag}</span>
+                              )}
                               {item.extensions.map((ext, j) => (
                                 <span key={j} className={styles.metaChip}>
                                   {ext}

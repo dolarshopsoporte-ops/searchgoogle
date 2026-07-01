@@ -420,6 +420,17 @@
   flex-wrap: wrap;
 }
 
+.tagBadge {
+  font-size: 12px;
+  padding: 4px 8px;
+  background: var(--accent-dim);
+  border-radius: 4px;
+  color: var(--accent);
+  font-family: var(--mono);
+  letter-spacing: 0.071em;
+  text-transform: uppercase;
+}
+
 .resultTitleRow {
   display: flex;
   align-items: center;

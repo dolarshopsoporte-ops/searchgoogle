@@ -8,28 +8,27 @@ export const maxDuration = 300;
 // Actor: johnvc/google-shopping-api-google-shopping-products-prices-deals
 // Input schema aceita apenas uma busca por run (campo obrigatório "q"), sem
 // suporte a batch — por isso rodamos um run por query, sequencialmente.
+// Campos confirmados no dataset real do actor (ver Output -> Table no console
+// da Apify): position, title, product_link, source, price, extracted_price,
+// old_price, extracted_old_price, rating, reviews, extensions[], thumbnails[],
+// serpapi_thumbnails[], tag (ex: "SALE", "NIEDRIGER PREIS"). Não existe campo
+// de delivery/shipping neste actor.
 type ApifyShoppingItem = {
   position?: number;
   title?: string;
   source?: string;
-  seller?: string;
   price?: string;
   extracted_price?: number;
-  extractedPrice?: number;
   old_price?: string;
+  extracted_old_price?: number;
   rating?: number;
   reviews?: number;
-  review_count?: number;
-  delivery?: string;
-  shipping?: string;
   extensions?: string[] | string;
+  thumbnails?: string[];
   product_link?: string;
-  productLink?: string;
   link?: string;
-  thumbnail?: string;
-  image?: string;
+  tag?: string;
   snippet?: string;
-  description?: string;
 };
 
 export type ShoppingResult = {
@@ -44,7 +43,7 @@ export type ShoppingResult = {
   rating: number | null;
   reviews: number | null;
   source: string | null;
-  delivery: string | null;
+  tag: string | null;
   extensions: string[];
   snippet: string | null;
 };
@@ -108,34 +107,41 @@ async function runApifyActor(
 
   if (status !== "SUCCEEDED") throw new Error("Apify falhou com status: " + status);
 
+  // Pequena folga: o dataset do run pode levar um instante para ficar
+  // disponível para leitura logo após o status virar SUCCEEDED.
+  await new Promise((r) => setTimeout(r, 1500));
+
   const datasetRes = await fetch(
     `https://api.apify.com/v2/actor-runs/${runId}/dataset/items?token=${token}`
   );
+  if (!datasetRes.ok) {
+    throw new Error(`Falha ao ler dataset do Apify (HTTP ${datasetRes.status})`);
+  }
   return datasetRes.json();
 }
 
 function normalize(query: string, items: ApifyShoppingItem[]): ShoppingResult[] {
   return items
-    .filter((it) => it.title && (it.product_link || it.productLink || it.link))
+    .filter((it) => it.title)
     .map((it) => ({
       query,
       position: it.position ?? null,
       title: it.title ?? "",
-      productLink: it.product_link ?? it.productLink ?? it.link ?? "",
-      thumbnail: it.thumbnail ?? it.image ?? null,
+      productLink: it.product_link ?? it.link ?? "",
+      thumbnail: it.thumbnails?.[0] ?? null,
       price: it.price ?? null,
-      extractedPrice: it.extracted_price ?? it.extractedPrice ?? null,
+      extractedPrice: it.extracted_price ?? null,
       oldPrice: it.old_price ?? null,
       rating: it.rating ?? null,
-      reviews: it.reviews ?? it.review_count ?? null,
-      source: it.source ?? it.seller ?? null,
-      delivery: it.delivery ?? it.shipping ?? null,
+      reviews: it.reviews ?? null,
+      source: it.source ?? null,
+      tag: it.tag ?? null,
       extensions: Array.isArray(it.extensions)
         ? it.extensions
         : it.extensions
           ? [it.extensions]
           : [],
-      snippet: it.snippet ?? it.description ?? null
+      snippet: it.snippet ?? null
     }));
 }
 
@@ -165,8 +171,10 @@ export async function POST(req: Request) {
   for (const query of queries) {
     try {
       const items = await runApifyActor(query, filters, actorId, token);
+      console.log(`[search] "${query}" -> ${items.length} itens brutos do Apify`);
       results.push(...normalize(query, items));
     } catch (err) {
+      console.error(`[search] "${query}" falhou:`, err);
       failedQueries.push({ query, error: (err as Error).message });
     }
   }
